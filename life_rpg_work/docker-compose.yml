@@ -1,0 +1,67 @@
+services:
+  database:
+    image: postgres:16-alpine
+    container_name: life-rpg-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-life_rpg}
+      POSTGRES_USER: ${POSTGRES_USER:-life_rpg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-life_rpg_dev_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-life_rpg} -d ${POSTGRES_DB:-life_rpg}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - life-rpg-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: life-rpg-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-life_rpg}:${POSTGRES_PASSWORD:-life_rpg_dev_password}@database:5432/${POSTGRES_DB:-life_rpg}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - life-rpg-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+    container_name: life-rpg-frontend
+    restart: unless-stopped
+    # No depends_on here on purpose: the app talks directly to hosted
+    # Supabase and has no runtime dependency on the backend/database
+    # services below, so its health shouldn't be able to block startup.
+    ports:
+      - "${APP_PORT:-8080}:80"
+    networks:
+      - life-rpg-network
+
+volumes:
+  postgres_data:
+
+networks:
+  life-rpg-network:
+    driver: bridge
